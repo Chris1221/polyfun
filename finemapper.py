@@ -281,10 +281,16 @@ class Fine_Mapping(object):
         # read sumstats and filter to target chromosome only
         logging.info("Loading sumstats file...")
         t0 = time.time()
-        try:
-            df_sumstats = pd.read_parquet(sumstats_file)
-        except (ArrowIOError, ArrowInvalid):
-            df_sumstats = pd.read_table(sumstats_file, sep="\s+")
+
+        if isinstance(sumstats_file, str):
+            try:
+                df_sumstats = pd.read_parquet(sumstats_file)
+            except (ArrowIOError, ArrowInvalid):
+                df_sumstats = pd.read_table(sumstats_file, sep="\s+")
+        else:
+            assert isinstance(sumstats_file, pd.DataFrame)
+            df_sumstats = sumstats_file
+
         if not np.any(df_sumstats["CHR"] == chr_num):
             raise IOError(
                 "sumstats file does not include any SNPs in chromosome %s" % (chr_num)
@@ -983,7 +989,13 @@ class SUSIE_Wrapper(Fine_Mapping):
             )
             self.df_ld_snps = self.df_sumstats_locus
         else:
-            if ld_file is None:
+            # I want to add a test case for just inputting the
+            # stats already, since I already slice them for
+            # simulation
+            if isinstance(ld_file, tuple):
+                print("Using custom LD file")
+                ld_arr, df_ld_snps = ld_file
+            elif ld_file is None:
                 ld_arr, df_ld_snps = self.get_ld_data(
                     locus_start, locus_end, need_bcor=False, verbose=verbose
                 )
