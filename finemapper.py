@@ -4,34 +4,36 @@ np.set_printoptions(precision=4, linewidth=200)
 import pandas as pd
 
 pd.set_option("display.width", 200)
-import os
-import time
-import scipy.stats as stats
-import logging
-import gzip
-from tqdm import tqdm
-import tempfile
-import shutil
 import glob
+import gzip
+import logging
+import os
+import shutil
 import subprocess
-from importlib import reload
-from .polyfun_utils import (
-    set_snpid_index,
-    TqdmUpTo,
-    configure_logger,
-    check_package_versions,
-)
-from pyarrow import ArrowIOError
-from pyarrow.lib import ArrowInvalid
-from ldstore.bcor import bcor
-import scipy.sparse as sparse
-from pandas_plink import read_plink
-from sklearn.impute import SimpleImputer
+import tempfile
+import time
 
 # from polyfun import configure_logger, check_package_versions
 import urllib.request
+from importlib import reload
 from urllib.parse import urlparse
+
+import scipy.sparse as sparse
+import scipy.stats as stats
 from packaging.version import Version
+from pandas_plink import read_plink
+from pyarrow import ArrowIOError
+from pyarrow.lib import ArrowInvalid
+from sklearn.impute import SimpleImputer
+from tqdm import tqdm
+
+from .ldstore.bcor import bcor
+from .polyfun_utils import (
+    TqdmUpTo,
+    check_package_versions,
+    configure_logger,
+    set_snpid_index,
+)
 
 
 def splash_screen():
@@ -928,8 +930,8 @@ class SUSIE_Wrapper(Fine_Mapping):
 
         # load SuSiE R package
         import rpy2
-        import rpy2.robjects.numpy2ri as numpy2ri
         import rpy2.robjects as ro
+        import rpy2.robjects.numpy2ri as numpy2ri
 
         ro.conversion.py2ri = numpy2ri
         numpy2ri.activate()
