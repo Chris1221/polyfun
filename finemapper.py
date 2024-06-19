@@ -4,36 +4,28 @@ np.set_printoptions(precision=4, linewidth=200)
 import pandas as pd
 
 pd.set_option("display.width", 200)
-import glob
-import gzip
-import logging
 import os
-import shutil
-import subprocess
-import tempfile
 import time
-
-# from polyfun import configure_logger, check_package_versions
-import urllib.request
-from importlib import reload
-from urllib.parse import urlparse
-
-import scipy.sparse as sparse
 import scipy.stats as stats
-from packaging.version import Version
-from pandas_plink import read_plink
+import logging
+import gzip
+from tqdm import tqdm
+import tempfile
+import shutil
+import glob
+import subprocess
+from importlib import reload
+from polyfun_utils import set_snpid_index, TqdmUpTo
 from pyarrow import ArrowIOError
 from pyarrow.lib import ArrowInvalid
+from ldstore.bcor import bcor
+import scipy.sparse as sparse
+from pandas_plink import read_plink
 from sklearn.impute import SimpleImputer
-from tqdm import tqdm
-
-from .ldstore.bcor import bcor
-from .polyfun_utils import (
-    TqdmUpTo,
-    check_package_versions,
-    configure_logger,
-    set_snpid_index,
-)
+from polyfun import configure_logger, check_package_versions
+import urllib.request
+from urllib.parse import urlparse
+from packaging.version import Version
 
 
 def splash_screen():
@@ -57,6 +49,7 @@ def uri_validator(x):
 
 
 def load_ld_npz(ld_prefix):
+
     logging.info("Loading LD file %s" % (ld_prefix))
     t0 = time.time()
 
@@ -243,6 +236,7 @@ def run_executable(
 
 
 def save_ld_to_npz(ld_arr, df_ld_snps, npz_file):
+
     assert npz_file.endswith(".npz")
     logging.info("Saving LD file %s" % (npz_file))
     t0 = time.time()
@@ -274,6 +268,7 @@ class Fine_Mapping(object):
         memory=None,
         allow_swapped_indel_alleles=False,
     ):
+
         # check that data is valid
         if genotypes_file is not None:
             if genotypes_file.endswith(".bgen"):
@@ -283,16 +278,10 @@ class Fine_Mapping(object):
         # read sumstats and filter to target chromosome only
         logging.info("Loading sumstats file...")
         t0 = time.time()
-
-        if isinstance(sumstats_file, str):
-            try:
-                df_sumstats = pd.read_parquet(sumstats_file)
-            except (ArrowIOError, ArrowInvalid):
-                df_sumstats = pd.read_table(sumstats_file, sep="\s+")
-        else:
-            assert isinstance(sumstats_file, pd.DataFrame)
-            df_sumstats = sumstats_file
-
+        try:
+            df_sumstats = pd.read_parquet(sumstats_file)
+        except (ArrowIOError, ArrowInvalid):
+            df_sumstats = pd.read_table(sumstats_file, sep="\s+")
         if not np.any(df_sumstats["CHR"] == chr_num):
             raise IOError(
                 "sumstats file does not include any SNPs in chromosome %s" % (chr_num)
@@ -408,6 +397,7 @@ class Fine_Mapping(object):
         assert self.df_ld.notnull().all().all()
 
     def find_cached_ld_file(self, locus_start, locus_end, need_bcor=False):
+
         # if there's no cache dir, return None
         if self.cache_dir is None:
             return None
@@ -516,6 +506,7 @@ class Fine_Mapping(object):
         return output_prefix
 
     def compute_ld_bgen(self, locus_start, locus_end, verbose=False):
+
         # create df_z
         df_z = self.df_sumstats_locus[["SNP", "CHR", "BP", "A1", "A2"]].copy()
 
@@ -750,6 +741,7 @@ class Fine_Mapping(object):
         return ld_arr, df_ld_snps
 
     def set_locus(self, locus_start, locus_end):
+
         # update self.df_sumstats_locus
         self.df_sumstats_locus = self.df_sumstats.query(
             "%d <= BP <= %d" % (locus_start, locus_end)
@@ -762,6 +754,7 @@ class Fine_Mapping(object):
             )
 
     def get_ld_data(self, locus_start, locus_end, need_bcor=False, verbose=False):
+
         ld_arr, df_ld_snps, ld_file = None, None, None
 
         # check if we already have a suitable LD file in the cache dir
@@ -900,6 +893,7 @@ class Fine_Mapping(object):
 
 
 class SUSIE_Wrapper(Fine_Mapping):
+
     def __init__(
         self,
         genotypes_file,
@@ -914,6 +908,7 @@ class SUSIE_Wrapper(Fine_Mapping):
         memory=None,
         allow_swapped_indel_alleles=False,
     ):
+
         super(SUSIE_Wrapper, self).__init__(
             genotypes_file,
             sumstats_file,
@@ -930,8 +925,8 @@ class SUSIE_Wrapper(Fine_Mapping):
 
         # load SuSiE R package
         import rpy2
-        import rpy2.robjects as ro
         import rpy2.robjects.numpy2ri as numpy2ri
+        import rpy2.robjects as ro
 
         ro.conversion.py2ri = numpy2ri
         numpy2ri.activate()
@@ -962,6 +957,7 @@ class SUSIE_Wrapper(Fine_Mapping):
         susie_outfile=None,
         finemap_dir=None,
     ):
+
         # check params
         if use_prior_causal_prob and "SNPVAR" not in self.df_sumstats.columns:
             raise ValueError("SNPVAR column not found in sumstats file")
@@ -991,13 +987,7 @@ class SUSIE_Wrapper(Fine_Mapping):
             )
             self.df_ld_snps = self.df_sumstats_locus
         else:
-            # I want to add a test case for just inputting the
-            # stats already, since I already slice them for
-            # simulation
-            if isinstance(ld_file, tuple):
-                print("Using custom LD file")
-                ld_arr, df_ld_snps = ld_file
-            elif ld_file is None:
+            if ld_file is None:
                 ld_arr, df_ld_snps = self.get_ld_data(
                     locus_start, locus_end, need_bcor=False, verbose=verbose
                 )
@@ -1103,7 +1093,7 @@ class SUSIE_Wrapper(Fine_Mapping):
                 os.path.join(debug_dir, "df_sumstats_locus.txt"), index=False, sep="\t"
             )
             np.savetxt(os.path.join(debug_dir, "bhat.txt"), bhat)
-            np.savez_compressed(os.path.join(debug_dir, "R.npz"), R=self.df_ld.values)
+            # np.savez_compressed(os.path.join(debug_dir, 'R.npz'), R=self.df_ld.values)
             np.savetxt(os.path.join(debug_dir, "n.txt"), [self.n])
             np.savetxt(os.path.join(debug_dir, "L.txt"), [num_causal_snps])
             np.savetxt(
@@ -1272,6 +1262,7 @@ class SUSIE_Wrapper(Fine_Mapping):
 
 
 class FINEMAP_Wrapper(Fine_Mapping):
+
     def __init__(
         self,
         genotypes_file,
@@ -1287,6 +1278,7 @@ class FINEMAP_Wrapper(Fine_Mapping):
         memory=None,
         allow_swapped_indel_alleles=False,
     ):
+
         super(FINEMAP_Wrapper, self).__init__(
             genotypes_file,
             sumstats_file,
@@ -1323,6 +1315,7 @@ class FINEMAP_Wrapper(Fine_Mapping):
         hess_resvar=False,
         finemap_dir=None,
     ):
+
         # check params
         if use_prior_causal_prob and "SNPVAR" not in self.df_sumstats.columns:
             raise ValueError("SNPVAR column not found in sumstats file")
@@ -1607,6 +1600,7 @@ class FINEMAP_Wrapper(Fine_Mapping):
 
 
 if __name__ == "__main__":
+
     import argparse
 
     parser = argparse.ArgumentParser()
