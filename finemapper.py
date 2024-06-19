@@ -1093,7 +1093,7 @@ class SUSIE_Wrapper(Fine_Mapping):
                 os.path.join(debug_dir, "df_sumstats_locus.txt"), index=False, sep="\t"
             )
             np.savetxt(os.path.join(debug_dir, "bhat.txt"), bhat)
-            # np.savez_compressed(os.path.join(debug_dir, 'R.npz'), R=self.df_ld.values)
+            np.savez_compressed(os.path.join(debug_dir, "R.npz"), R=self.df_ld.values)
             np.savetxt(os.path.join(debug_dir, "n.txt"), [self.n])
             np.savetxt(os.path.join(debug_dir, "L.txt"), [num_causal_snps])
             np.savetxt(
