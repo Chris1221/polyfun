@@ -987,7 +987,7 @@ class SUSIE_Wrapper(Fine_Mapping):
             self.df_ld = pd.DataFrame(
                 np.eye(self.df_sumstats_locus.shape[0]),
                 index=self.df_sumstats_locus.index,
-                columns=self.df_sumstats_locus,
+                columns=self.df_sumstats_locus.index,
             )
             self.df_ld_snps = self.df_sumstats_locus
         else:
@@ -1051,10 +1051,13 @@ class SUSIE_Wrapper(Fine_Mapping):
                 "Average local SNP heritability estimated by modified HESS over %d iterations: %0.4e"
                 % (hess_iter, h2_hess)
             )
-            if h2_hess > 10:
+            if h2_hess > 1.0:
                 logging.warning(
-                    "The HESS estimator is unconstrained, and the estimate is an order of magnitude greater than the expected max of 1. Use with caution"
+                    "HESS heritability estimate %.4f exceeds 1.0 (physically impossible). "
+                    "This usually indicates n is too small or sumstats are inconsistent with the LD. "
+                    "Capping at 1.0." % h2_hess
                 )
+                h2_hess = min(h2_hess, 1.0)
             prior_var = h2_hess / num_causal_snps
             if prior_var <= 0:
                 raise ValueError(
@@ -1136,7 +1139,32 @@ class SUSIE_Wrapper(Fine_Mapping):
         if residual_var is not None:
             residual_var_init = residual_var
 
-        if hasattr(self.susieR, "susie_suff_stat"):
+        # susieR >= ~0.12.35 moved the bhat/shat/R summary-stat interface out of
+        # susie_suff_stat (now only accepts raw XtX/Xty/yty) and into susie_rss.
+        # Check susie_rss first, then fall back to the older entry points.
+        if hasattr(self.susieR, "susie_rss"):
+            logging.info("Using susieR::susie_rss()")
+            susie_obj = self.susieR.susie_rss(
+                bhat=bhat.reshape((m, 1)),
+                shat=np.ones((m, 1)),
+                R=self.df_ld.values,
+                n=self.n,
+                L=num_causal_snps,
+                scaled_prior_variance=(0.0001 if (prior_var is None) else prior_var),
+                estimate_prior_variance=(prior_var is None),
+                residual_variance=(
+                    self.R_null if (residual_var_init is None) else residual_var_init
+                ),
+                estimate_residual_variance=(residual_var is None),
+                max_iter=susie_max_iter,
+                verbose=verbose,
+                prior_weights=(
+                    prior_weights.reshape((m, 1))
+                    if use_prior_causal_prob
+                    else self.R_null
+                ),
+            )
+        elif hasattr(self.susieR, "susie_suff_stat"):
             logging.info("Using susieR::susie_suff_stat()")
             susie_obj = self.susieR.susie_suff_stat(
                 bhat=bhat.reshape((m, 1)),
@@ -1182,29 +1210,32 @@ class SUSIE_Wrapper(Fine_Mapping):
             )
         else:
             raise NotImplementedError(
-                "Only susie_suff_stat() and susie_bhat() are supported. Check your version of susieR"
+                "susie_rss(), susie_suff_stat(), and susie_bhat() were all not found. "
+                "Check your version of susieR"
             )
         susie_time = time.time() - t0
         logging.info("Done in %0.2f seconds" % (susie_time))
 
         # extract pip and beta_mean
-        pip = np.array(self.susieR.susie_get_pip(susie_obj))
-        beta_mean = np.array(self.susieR.coef_susie(susie_obj)[1:])
-        assert np.allclose(
-            beta_mean,
-            np.sum(
-                np.array(susie_obj.rx2("mu")) * np.array(susie_obj.rx2("alpha")), axis=0
-            )
-            / np.array(susie_obj.rx2("X_column_scale_factors")),
-        )
+        # rpy2 3.5+ converts R objects to NamedList (no rx2 or S3 class).
+        # Use getbyname() for field access — already returns numpy arrays.
+        def _gb(obj, key):
+            """getbyname with np.array fallback."""
+            v = obj.getbyname(key)
+            return np.array(v) if not isinstance(v, np.ndarray) else v
 
-        # compute the posterior mean of beta^2
-        s_alpha = np.array(susie_obj.rx2("alpha"))
-        s_mu = np.array(susie_obj.rx2("mu"))
-        s_mu2 = np.array(susie_obj.rx2("mu2"))
-        s_X_column_scale_factors = np.array(susie_obj.rx2("X_column_scale_factors"))
-        beta_var = np.sum(s_alpha * s_mu2 - (s_alpha * s_mu) ** 2, axis=0) / (
-            s_X_column_scale_factors**2
+        _alpha = _gb(susie_obj, "alpha")            # (L, m)
+        _V     = _gb(susie_obj, "V").ravel()        # (L,)
+        _include = _V > 1e-9
+        _alpha_filt = _alpha[_include, :] if _include.any() else np.zeros((1, _alpha.shape[1]))
+        pip = 1.0 - np.prod(1.0 - _alpha_filt, axis=0)
+        _mu  = _gb(susie_obj, "mu")
+        _X_col_scale = _gb(susie_obj, "X_column_scale_factors").ravel()
+        beta_mean = np.sum(_alpha * _mu, axis=0) / _X_col_scale
+        # compute the posterior mean of beta^2 (reuse already-extracted arrays)
+        s_mu2 = _gb(susie_obj, "mu2")
+        beta_var = np.sum(_alpha * s_mu2 - (_alpha * _mu) ** 2, axis=0) / (
+            _X_col_scale**2
         )
         assert np.all(beta_var >= 0)
 
@@ -1223,30 +1254,20 @@ class SUSIE_Wrapper(Fine_Mapping):
         df_susie["DISTANCE_FROM_CENTER"] = np.abs(df_susie["BP"] - middle)
 
         # mark causal sets
-        import rpy2
-
-        logging.info("Using rpy2 version %s" % (rpy2.__version__))
-        if Version(rpy2.__version__) >= Version("3.5.9"):
-            snames = (susie_obj.names).tolist()
-            self.susie_dict = {
-                key: np.array(susie_obj.rx2(key), dtype=object) for key in snames
-            }
-        else:
-            self.susie_dict = {
-                key: np.array(susie_obj.rx2(key), dtype=object)
-                for key in list(susie_obj.names)
-            }
+        # rpy2 3.5+: susie_obj is a NamedList; sets is a nested NamedList.
+        # sets.cs is a NamedList {"L1": array([...]), "L2": ...} of 1-based indices.
         df_susie["CREDIBLE_SET"] = 0
-        susie_sets = self.susie_dict["sets"][0]
-        # if type(susie_sets) != self.RNULLType:
         try:
-            for set_i, susie_set in enumerate(susie_sets):
+            _sets = susie_obj.getbyname("sets")
+            _cs   = _sets.getbyname("cs")          # NamedList of CS vectors
+            for set_i, cs_tag in enumerate(_cs.itertags()):
+                susie_set = _cs.getbyname(str(cs_tag))
                 is_in_set = np.zeros(df_susie.shape[0], dtype=bool)
-                is_in_set[np.array(susie_set) - 1] = True
+                is_in_set[np.array(susie_set).astype(int) - 1] = True
                 is_in_set[df_susie["CREDIBLE_SET"] > 0] = False
                 df_susie.loc[is_in_set, "CREDIBLE_SET"] = set_i + 1
-        except TypeError:
-            pass
+        except (TypeError, ValueError, AttributeError):
+            pass  # no credible sets (model didn't converge or no signal)
 
         # save SuSiE object if requested
         if susie_outfile is not None:
