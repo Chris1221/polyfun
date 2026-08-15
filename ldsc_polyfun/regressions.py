@@ -350,7 +350,12 @@ class LD_Score_Regression(object):
     def _enrichment(self, M, M_tot, cat, tot):
         '''Compute proportion of SNPs per-category enrichment for h2 or gencov.'''
         M_prop = M / M_tot
-        enrichment = np.divide(cat, M) / (tot / M_tot)
+        # M can be ~0 (or exactly 0) for signed/continuous annotations whose values
+        # happen to net out near zero across SNPs -- upstream LDSC treats this as an
+        # undefined enrichment (nan/inf) rather than a fatal error, so scope the
+        # module-wide seterr(raise) override down to just this division.
+        with np.errstate(divide='ignore', invalid='ignore'):
+            enrichment = np.divide(cat, M) / (tot / M_tot)
         return enrichment, M_prop
 
     def _intercept(self, jknife):
