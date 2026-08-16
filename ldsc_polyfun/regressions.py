@@ -350,7 +350,12 @@ class LD_Score_Regression(object):
     def _enrichment(self, M, M_tot, cat, tot):
         '''Compute proportion of SNPs per-category enrichment for h2 or gencov.'''
         M_prop = M / M_tot
-        enrichment = np.divide(cat, M) / (tot / M_tot)
+        # M can be ~0 (or exactly 0) for signed/continuous annotations whose values
+        # happen to net out near zero across SNPs -- upstream LDSC treats this as an
+        # undefined enrichment (nan/inf) rather than a fatal error, so scope the
+        # module-wide seterr(raise) override down to just this division.
+        with np.errstate(divide='ignore', invalid='ignore'):
+            enrichment = np.divide(cat, M) / (tot / M_tot)
         return enrichment, M_prop
 
     def _intercept(self, jknife):
@@ -462,25 +467,39 @@ class Hsq(LD_Score_Regression):
 
     def _overlap_output(self, category_names, overlap_matrix, M_annot, M_tot, print_coefficients):
         '''LD Score regression summary for overlapping categories.'''
-        overlap_matrix_prop = np.zeros([self.n_annot,self.n_annot])
-        for i in range(self.n_annot):
-            overlap_matrix_prop[i, :] = overlap_matrix[i, :] / M_annot
+        # M_annot can be ~0 (or exactly 0) for signed/continuous annotations whose
+        # values happen to net out near zero across SNPs -- same class of undefined
+        # enrichment (nan/inf) as in _enrichment above, so scope the module-wide
+        # seterr(raise) override down to just these divisions.
+        with np.errstate(divide='ignore', invalid='ignore'):
+            overlap_matrix_prop = np.zeros([self.n_annot,self.n_annot])
+            for i in range(self.n_annot):
+                overlap_matrix_prop[i, :] = overlap_matrix[i, :] / M_annot
 
-        prop_hsq_overlap = np.dot(
-            overlap_matrix_prop, self.prop.T).reshape((1, self.n_annot))
-        prop_hsq_overlap_var = np.diag(
-            np.dot(np.dot(overlap_matrix_prop, self.prop_cov), overlap_matrix_prop.T))
-        prop_hsq_overlap_se = np.sqrt(
-            np.maximum(0, prop_hsq_overlap_var)).reshape((1, self.n_annot))
-        one_d_convert = lambda x: np.array(x).reshape(np.prod(x.shape))
-        prop_M_overlap = M_annot / M_tot
-        enrichment = prop_hsq_overlap / prop_M_overlap
-        enrichment_se = prop_hsq_overlap_se / prop_M_overlap
-        overlap_matrix_diff = np.zeros([self.n_annot,self.n_annot])
-        for i in range(self.n_annot):
-            if not M_tot == M_annot[0,i]:
-                overlap_matrix_diff[i, :] = overlap_matrix[i,:]/M_annot[0,i] - \
-                    (M_annot - overlap_matrix[i,:]) / (M_tot-M_annot[0,i])
+            # A single degenerate column here (from an M_annot==0 category) produces
+            # 0/0 (NaN) on its own diagonal entry but +-inf everywhere else in that
+            # column (nonzero overlap / 0). np.nan_to_num's defaults only replace NaN
+            # -- +-inf get replaced with the largest/smallest finite float instead,
+            # which still overflows the downstream dot products into NaN/inf and
+            # silently poisons every OTHER category's Prop._h2/Enrichment too. Treat a
+            # zero-M category's overlap contribution as zero instead of undefined.
+            overlap_matrix_prop = np.nan_to_num(overlap_matrix_prop, nan=0.0, posinf=0.0, neginf=0.0)
+
+            prop_hsq_overlap = np.dot(
+                overlap_matrix_prop, self.prop.T).reshape((1, self.n_annot))
+            prop_hsq_overlap_var = np.diag(
+                np.dot(np.dot(overlap_matrix_prop, self.prop_cov), overlap_matrix_prop.T))
+            prop_hsq_overlap_se = np.sqrt(
+                np.maximum(0, prop_hsq_overlap_var)).reshape((1, self.n_annot))
+            one_d_convert = lambda x: np.array(x).reshape(np.prod(x.shape))
+            prop_M_overlap = M_annot / M_tot
+            enrichment = prop_hsq_overlap / prop_M_overlap
+            enrichment_se = prop_hsq_overlap_se / prop_M_overlap
+            overlap_matrix_diff = np.zeros([self.n_annot,self.n_annot])
+            for i in range(self.n_annot):
+                if not M_tot == M_annot[0,i]:
+                    overlap_matrix_diff[i, :] = overlap_matrix[i,:]/M_annot[0,i] - \
+                        (M_annot - overlap_matrix[i,:]) / (M_tot-M_annot[0,i])
 
         diff_est = np.dot(overlap_matrix_diff,self.coef)
         diff_cov = np.dot(np.dot(overlap_matrix_diff,self.coef_cov),overlap_matrix_diff.T)
