@@ -272,16 +272,6 @@ class LD_Score_Regression(object):
         self.prop, self.prop_cov, self.prop_se =\
             self._prop(jknife, M, Nbar, self.cat, self.tot)
 
-        import sys
-        print(f"DEBUG_NAN tot={self.tot!r} n_nan_M={np.isnan(np.asarray(M)).sum()} "
-              f"n_nan_cat={np.isnan(np.asarray(self.cat)).sum()} "
-              f"n_nan_coef={np.isnan(np.asarray(self.coef)).sum()} "
-              f"n_nan_prop={np.isnan(np.asarray(self.prop)).sum()} "
-              f"n_nan_prop_cov={np.isnan(np.asarray(self.prop_cov)).sum()} "
-              f"prop_shape={np.asarray(self.prop).shape} "
-              f"first_nan_prop_idx={np.where(np.isnan(np.asarray(self.prop).ravel()))[0][:10].tolist()}",
-              file=sys.stderr, flush=True)
-
         self.enrichment, self.M_prop = self._enrichment(
             M, M_tot, self.cat, self.tot)
         if not self.constrain_intercept:
@@ -486,12 +476,14 @@ class Hsq(LD_Score_Regression):
             for i in range(self.n_annot):
                 overlap_matrix_prop[i, :] = overlap_matrix[i, :] / M_annot
 
-            # A single all-NaN column here (from one degenerate M_annot==0 category)
-            # would otherwise poison every row of the downstream dot products --
-            # NaN * 0 is still NaN -- silently turning every OTHER category's
-            # Prop._h2/Enrichment into NaN too. Treat a zero-M category's overlap
-            # contribution as zero instead of undefined.
-            overlap_matrix_prop = np.nan_to_num(overlap_matrix_prop, nan=0.0)
+            # A single degenerate column here (from an M_annot==0 category) produces
+            # 0/0 (NaN) on its own diagonal entry but +-inf everywhere else in that
+            # column (nonzero overlap / 0). np.nan_to_num's defaults only replace NaN
+            # -- +-inf get replaced with the largest/smallest finite float instead,
+            # which still overflows the downstream dot products into NaN/inf and
+            # silently poisons every OTHER category's Prop._h2/Enrichment too. Treat a
+            # zero-M category's overlap contribution as zero instead of undefined.
+            overlap_matrix_prop = np.nan_to_num(overlap_matrix_prop, nan=0.0, posinf=0.0, neginf=0.0)
 
             prop_hsq_overlap = np.dot(
                 overlap_matrix_prop, self.prop.T).reshape((1, self.n_annot))
