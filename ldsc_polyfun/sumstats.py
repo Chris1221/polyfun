@@ -422,6 +422,16 @@ def estimate_h2(args, log):
     if args.overlap_annot:
         overlap_matrix, M_tot = _read_annot(args, log)
 
+        import sys
+        _M_annot_arr = np.asarray(M_annot)
+        print(f"DEBUG_NAN pre-overlap_output: M_annot_shape={_M_annot_arr.shape} "
+              f"n_zero_M_annot={(np.asarray(_M_annot_arr)==0).sum()} "
+              f"n_neg_M_annot={(np.asarray(_M_annot_arr)<0).sum()} "
+              f"n_nan_overlap_matrix={np.isnan(np.asarray(overlap_matrix)).sum()} "
+              f"overlap_matrix_shape={np.asarray(overlap_matrix).shape} "
+              f"M_tot={M_tot!r} n_annot_names={len(ref_ld_cnames)}",
+              file=sys.stderr, flush=True)
+
         # overlap_matrix = overlap_matrix[np.array(~novar_cols), np.array(~novar_cols)]#np.logical_not
         df_results = hsqhat._overlap_output(
             ref_ld_cnames, overlap_matrix, M_annot, M_tot, args.print_coefficients

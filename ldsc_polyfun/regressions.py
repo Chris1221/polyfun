@@ -272,6 +272,16 @@ class LD_Score_Regression(object):
         self.prop, self.prop_cov, self.prop_se =\
             self._prop(jknife, M, Nbar, self.cat, self.tot)
 
+        import sys
+        print(f"DEBUG_NAN tot={self.tot!r} n_nan_M={np.isnan(np.asarray(M)).sum()} "
+              f"n_nan_cat={np.isnan(np.asarray(self.cat)).sum()} "
+              f"n_nan_coef={np.isnan(np.asarray(self.coef)).sum()} "
+              f"n_nan_prop={np.isnan(np.asarray(self.prop)).sum()} "
+              f"n_nan_prop_cov={np.isnan(np.asarray(self.prop_cov)).sum()} "
+              f"prop_shape={np.asarray(self.prop).shape} "
+              f"first_nan_prop_idx={np.where(np.isnan(np.asarray(self.prop).ravel()))[0][:10].tolist()}",
+              file=sys.stderr, flush=True)
+
         self.enrichment, self.M_prop = self._enrichment(
             M, M_tot, self.cat, self.tot)
         if not self.constrain_intercept:
