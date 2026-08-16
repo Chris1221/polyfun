@@ -476,6 +476,13 @@ class Hsq(LD_Score_Regression):
             for i in range(self.n_annot):
                 overlap_matrix_prop[i, :] = overlap_matrix[i, :] / M_annot
 
+            # A single all-NaN column here (from one degenerate M_annot==0 category)
+            # would otherwise poison every row of the downstream dot products --
+            # NaN * 0 is still NaN -- silently turning every OTHER category's
+            # Prop._h2/Enrichment into NaN too. Treat a zero-M category's overlap
+            # contribution as zero instead of undefined.
+            overlap_matrix_prop = np.nan_to_num(overlap_matrix_prop, nan=0.0)
+
             prop_hsq_overlap = np.dot(
                 overlap_matrix_prop, self.prop.T).reshape((1, self.n_annot))
             prop_hsq_overlap_var = np.diag(
